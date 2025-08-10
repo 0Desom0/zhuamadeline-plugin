@@ -2588,7 +2588,7 @@ async def handle_batch_capture(
             
             # ============= 经验计算 =============
             # 只要抓到的是5号猎场的玛德琳就给经验
-            if information[5] == '5' and random.randint(1,100) <= 20:
+            if information[5] == '5' and random.randint(1,100) <= 20 and data[str(user_id)]['grade'] < max_grade:
                 
                 # 初始化两个经验，方便构建
                 if original_exp == 0 and original_max_exp == 0:
@@ -2596,10 +2596,7 @@ async def handle_batch_capture(
                     original_max_exp = data[str(user_id)]["max_exp"]
                 
                 # 获取经验
-                try:
-                    exp_msg, grade_msg, data, exp, grade= calculate_level_and_exp(data, user_id, information[0], 1)
-                except:
-                    exp_msg, grade_msg, data = calculate_level_and_exp(data, user_id, information[0], 1)
+                exp_msg, grade_msg, data, exp, grade= calculate_level_and_exp(data, user_id, information[0], 1)
                 if exp_msg:
                     effect_stats['经验']['count'] += 1
                     effect_stats['经验']['exp'] += exp

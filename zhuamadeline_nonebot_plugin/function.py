@@ -878,6 +878,7 @@ def calculate_level_and_exp(data, user_id, level, isitem):
     exp_msg = ''
     grade_msg = ''
     grade_msg_spe = ''
+    max_grade_msg = ''
     
     # 如果满级直接返回
     if grade == max_grade:
@@ -1046,10 +1047,10 @@ def get_boss_rewards(boss_data, user_id, grade):
     
     if boss_data["type"] == "mini":
         exp = math.floor(boss_data["max_hp"] * 1.3)
-        berry = boss_data["max_hp"] * 10
+        berry = boss_data["max_hp"] * 20
         if is_max_grade:
-            berry += boss_data["max_hp"] * 4
-            reward_msg = f"你已击败迷你Boss[{boss_data['name']}]！\n由于已满级，获得双倍奖励：{berry}颗草莓"
+            berry += boss_data["max_hp"] * 10
+            reward_msg = f"你已击败迷你Boss[{boss_data['name']}]！\n由于已满级，获得额外奖励：{berry}颗草莓"
             return {"berry": berry}, exp, reward_msg
         reward_msg = f"你已击败迷你Boss[{boss_data['name']}]！\n获得{berry}颗草莓"
         return {"berry": berry}, exp, reward_msg
@@ -1071,14 +1072,14 @@ def get_boss_rewards(boss_data, user_id, grade):
         
     elif boss_data["type"] == "hard":
         exp = math.floor(boss_data["max_hp"] * 1.5)
-        berry = boss_data["max_hp"] * 10
+        berry = boss_data["max_hp"] * 20
         items = {
             "道具盲盒": random.randint(20, 40),
         }
         if is_max_grade:
-            berry += boss_data["max_hp"] * 5
+            berry += boss_data["max_hp"] * 10
             items["道具盲盒"] += 10
-            reward_msg = f"你已击败精英Boss[{boss_data['name']}]！\n由于已满级，经验值奖励改为获得血量x5颗草莓，盲盒多获得10个，总计：{berry}颗草莓、"
+            reward_msg = f"你已击败精英Boss[{boss_data['name']}]！\n由于已满级，经验值奖励改为获得血量x10颗草莓，盲盒多获得10个，总计：{berry}颗草莓、"
         else:
             reward_msg = f"你已击败精英Boss[{boss_data['name']}]！\n获得{berry}颗草莓、"
         

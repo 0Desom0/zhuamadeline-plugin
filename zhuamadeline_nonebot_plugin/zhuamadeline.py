@@ -384,10 +384,7 @@ async def zhuamadeline(bot: Bot, event: GroupMessageEvent):
                 return
 
             # 没有Boss时的正常经验计算
-            try:
-                exp_msg, grade_msg, data, _, _ = calculate_level_and_exp(data, user_id, level, 0)
-            except:
-                exp_msg, grade_msg, data = calculate_level_and_exp(data, user_id, level, 0)
+            exp_msg, grade_msg, data, _, _ = calculate_level_and_exp(data, user_id, level, 0)
         
         #奖励草莓
         lucky_give = 0
