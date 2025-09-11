@@ -209,6 +209,7 @@ madeline_name_list5 = {
         "金玛丽",
         "kidhole",
         "Lili",
+        "奥歘鸡",
     ],
 }
 
@@ -1112,6 +1113,11 @@ madeline_data5 = {
             'name': 'Lili',
             'description':
             '愿所有人不要再被那一堆钥匙所困……'
+        },
+        '21':{
+            'name': '奥歘鸡',
+            'description':
+            '#表情变得十分奥歘'
         },
     }
 }
