@@ -1,61 +1,64 @@
 from nonebot import require, on_command, get_bots
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment, GROUP
-from .whitelist import whitelist_rule
-from .config import zhuama_group
+from nonebot.exception import FinishedException # 导入以防万一，但通常不捕获它
 import httpx
 import logging
 
-# 更新后的 API 地址
-NEWS_URL = "https://60s.viki.moe/v2/60s/"
-
-# 注册定时任务插件
+# 确保在导入 scheduler 之前 require
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler
 
-async def fetch_news_image():
-    """获取新闻图片地址"""
+from .whitelist import whitelist_rule
+from .config import zhuama_group
+
+NEWS_URL = "https://60s.viki.moe/v2/60s/"
+
+async def fetch_news_image() -> str:
+    """
+    获取新闻图片地址
+    仅对网络请求部分进行异常捕获，避免影响 NoneBot 流程控制
+    """
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
             response = await client.get(NEWS_URL, timeout=15)
-            if response.status_code != 200:
-                return None
-            
-            res_json = response.json()
-            # 根据你提供的 JSON 结构解析：data -> image
-            if res_json.get("code") == 200:
-                return res_json.get("data", {}).get("image")
-            return None
+            if response.status_code == 200:
+                res_json = response.json()
+                if res_json.get("code") == 200:
+                    return res_json.get("data", {}).get("image")
     except Exception as e:
-        logging.error(f"获取每日新闻图片出错: {e}")
-        return None
+        logging.error(f"[60s] API请求失败: {e}")
+    return ""
+
+# --- 定时任务部分 ---
 
 @scheduler.scheduled_job("cron", hour=8, minute=0, id="daily_news_job")
 async def send_daily_news():
     """每天早上 8:00 发送新闻图片"""
-    
     image_url = await fetch_news_image()
     if not image_url:
-        logging.warning("定时任务：未获取到新闻图片，跳过发送")
+        logging.warning("[60s] 定时任务获取图片失败，跳过发送")
         return
 
-    # 构造消息：文字 + 图片
-    msg_text = "早上好呀！8点了，花60s来看看今日新闻吧！"
-    message = msg_text + MessageSegment.image(image_url)
+    msg = "早上好呀！8点了，花60s来看看今日新闻吧！" + MessageSegment.image(image_url)
     
     bots = get_bots()
-    for bot in bots.values():
-        try:
-            # 发送到指定的群组
-            await bot.send_group_msg(group_id=zhuama_group, message=message)
-            # 如果想发送给特定用户，可以解开下行注释
-            # await bot.send_private_msg(user_id=12345678, message=message)
-        except Exception as e:
-            logging.error(f"机器人 {bot.self_id} 发送定时新闻失败: {e}")
+    if not bots:
+        return
 
-# 注册指令
+    # 注意：如果挂了多个 Bot 实例，这里会循环所有 bot 发送
+    # 通常取第一个可用的 bot 即可，防止在同一个群里发多次
+    bot = list(bots.values())[0]
+    
+    try:
+        await bot.send_group_msg(group_id=zhuama_group, message=msg)
+    except Exception as e:
+        logging.error(f"[60s] 定时任务发送群 {zhuama_group} 失败: {e}")
+
+# --- 指令处理部分 ---
+
 news = on_command(
     '60s', 
-    aliases={"60秒", '每日新闻', 'dailynews', '1min'}, 
+    aliases={"60秒", '每日新闻', '1min'}, 
     permission=GROUP, 
     priority=5, 
     block=True, 
@@ -65,13 +68,11 @@ news = on_command(
 @news.handle()
 async def news_command(bot: Bot, event: Event):
     """手动触发获取新闻图片"""
-    await news.send("正在获取今日新闻，请稍候...")
-    
     image_url = await fetch_news_image()
-    if image_url:
-        try:
-            await news.finish(MessageSegment.image(image_url))
-        except Exception as e:
-            await news.finish(f"图片发送失败，可能是网络波动：{e}")
-    else:
+    
+    if not image_url:
+        # 这里不需要 try-except，finish 会直接抛出异常结束当前 handler
         await news.finish("啊呀，获取新闻图片失败，没准是 API 炸了！")
+    
+    # 成功获取则直接发送并结束
+    await news.finish(MessageSegment.image(image_url))
