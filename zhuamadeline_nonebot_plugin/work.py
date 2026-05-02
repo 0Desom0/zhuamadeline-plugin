@@ -115,6 +115,38 @@ def apply_effects(state: WorkState, effects: List[Dict]):
         state.bonus_berry += effect.get('bonus_berry', 0)
         state.bonus_item += effect.get('bonus_item', 0)
 
+
+def parse_work_madeline_selector(selector: str):
+    if re.fullmatch(r'[1-5]-', selector):
+        return int(selector[0]), True
+    if re.fullmatch(r'[1-5]', selector):
+        return int(selector), False
+    return None
+
+
+def choose_owned_madeline_by_level(user_id: str, target_level: int, allow_downgrade: bool = False):
+    levels_to_try = range(target_level, 0, -1) if allow_downgrade else [target_level]
+
+    for current_level in levels_to_try:
+        candidates = []
+        weights = []
+
+        for lc, config in MADELINE_CONFIGS.items():
+            madeline_check = open_data(config.user_path)
+            for key, count in madeline_check.get(user_id, {}).items():
+                if count <= 0 or '_' not in key:
+                    continue
+
+                level, num = key.split('_', 1)
+                if level == str(current_level):
+                    candidates.append([level, num, str(lc)])
+                    weights.append(count)
+
+        if candidates:
+            return random.choices(candidates, weights=weights, k=1)[0]
+
+    return 0
+
 work = on_command('外出', aliases={'work'}, permission=GROUP, priority=2, block=True, rule=whitelist_rule)
 
 @work.handle()
@@ -126,10 +158,10 @@ async def work_handle(event: GroupMessageEvent, bot: Bot, arg: Message = Command
     # 解析命令参数
     command = str(arg).split("/")
     if len(command) != 3:
-        await send_image_or_text(user_id, work, "输入不合规，请按照以下格式输入:\n.work 工作区域/携带食物/派遣madeline的名称", True, None)
+        await send_image_or_text(user_id, work, "输入不合规，请按照以下格式输入:\n.work 工作区域/携带食物/派遣madeline的名称/编号/等级", True, None)
         return
     
-    area, food, madeline = [part.lower() for part in command]
+    area, food, madeline = [part.strip().lower() for part in command]
     
     if user_id not in data:
         await send_image_or_text(user_id, work, "你还没尝试抓过madeline……", True, None)
@@ -202,20 +234,25 @@ async def work_handle(event: GroupMessageEvent, bot: Bot, arg: Message = Command
     if user_info['item'].get(food, 0) <= 0:
         await send_image_or_text(user_id, work, f"你现在没有{food}!", True, None)
         return
-    
-    # 消耗食物
-    user_info['item'][food] -= 1
-    if user_info['item'][food] <= 0:
-        del user_info['item'][food]
-    
-    # 查找 madeline 信息
-    madeline_info = find_madeline(madeline)
-    if madeline_info == 0:
-        if re.match(r'^\d+[_-]\d+[_-]\d+$', madeline):
-            await send_image_or_text(user_id, count_madeline, f"未找到编号为<{madeline}>的Madeline", True, None)
-        else:
-            await send_image_or_text(user_id, count_madeline, f"未找到名为[{madeline}]的Madeline", True, None)
-        return
+
+    selector = parse_work_madeline_selector(madeline)
+    if selector is not None:
+        target_level, allow_downgrade = selector
+        madeline_info = choose_owned_madeline_by_level(user_id, target_level, allow_downgrade)
+        if madeline_info == 0:
+            if allow_downgrade:
+                await send_image_or_text(user_id, work, f"你没有可用于工作的{target_level}级及以下Madeline", True, None)
+            else:
+                await send_image_or_text(user_id, work, f"你没有可用于工作的{target_level}级Madeline", True, None)
+            return
+    else:
+        madeline_info = find_madeline(madeline)
+        if madeline_info == 0:
+            if re.match(r'^\d+[_-]\d+[_-]\d+$', madeline):
+                await send_image_or_text(user_id, count_madeline, f"未找到编号为<{madeline}>的Madeline", True, None)
+            else:
+                await send_image_or_text(user_id, count_madeline, f"未找到名为[{madeline}]的Madeline", True, None)
+            return
     
     # 获取对应猎场数据
     level = int(madeline_info[0]) # 等级
@@ -233,6 +270,10 @@ async def work_handle(event: GroupMessageEvent, bot: Bot, arg: Message = Command
     if madeline_check[user_id].get(madeline_key, 0) <= 0:
         await send_image_or_text(user_id, work, "你没有抓到过此Madeline，\n或者此Madeline数量为0", True, None)
         return
+
+    user_info['item'][food] -= 1
+    if user_info['item'][food] <= 0:
+        del user_info['item'][food]
 
     madeline_check[user_id][madeline_key] -= 1
     apply_effects(state, [LEVEL_EFFECTS.get(madeline_info[0], {})])  # madeline_info[0] 是等级
@@ -265,8 +306,11 @@ async def work_handle(event: GroupMessageEvent, bot: Bot, arg: Message = Command
 
     # 获取Madeline的名字（使用print_zhua函数）
     madeline_name = print_zhua(level, num, lc)[1]  # [等级,名字,...]
+    select_prefix = ""
+    if selector is not None:
+        select_prefix = f"已根据条件随机选中{level}级[{madeline_name}]。\n"
     
-    await send_image_or_text(user_id, work, f"你成功派遣[{madeline_name}]携带着[{food}]去[{area}]工作了！\n预计需要工作{duration}个小时！", True, None)
+    await send_image_or_text(user_id, work, f"{select_prefix}你成功派遣[{madeline_name}]携带着[{food}]去[{area}]工作了！\n预计需要工作{duration}个小时！", True, None)
 
 
 status_work = on_command('工作进度', aliases={'workjd','jdwork'}, permission=GROUP, priority=1, block=True, rule=whitelist_rule)
@@ -653,7 +697,7 @@ async def work_help_handle(bot: Bot, Bot_event: GroupMessageEvent):
     user_id = str(Bot_event.user_id)
     msg = (
         "以下是关于工作的一些指令：\n\n"
-        ".work 工作区域/携带食物/派遣madeline的名称\n工作的主命令，派遣madeline出去工作，不过注意派出去的madeline不会回来哦！携带的食物和体力可以在商店里面购买，体力也可以通过休息来恢复，工作区域在下面有哦！\n\n"
+        ".work 工作区域/携带食物/派遣madeline的名称/编号/等级\n工作的主命令，派遣madeline出去工作，不过注意派出去的madeline不会回来哦！携带的食物和体力可以在商店里面购买，体力也可以通过休息来恢复，工作区域在下面有哦！第三段参数除了名称和编号，还可以直接填1~5的等级数字来随机选一只该等级的madeline；输入5-这类格式时，会从该等级开始向下自动找可用的madeline。\n\n"
         ".workspeed \n可以消耗体力来加速工作完成，但是随着每天加速次数的增加，消耗的体力越多\n\n"
         ".workjd\n查询Madeline工作的进度，工作完成后用这个命令来收取草莓/道具\n\n"
         ".worksleep\n休息4h，休息的这4h能恢复200体力（若有房产证藏品则是600），但是这个时间内不能抓，不过能和加工器同时使用。不过每23h只能休息一次哦！\n\n"
