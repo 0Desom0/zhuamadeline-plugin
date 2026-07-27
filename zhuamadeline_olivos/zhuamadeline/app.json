@@ -1,0 +1,22 @@
+{
+    "name": "抓玛德琳",
+    "author": "Desom",
+    "namespace": "zhuamadeline",
+    "info": "抓玛德琳（zhuamadeline）群游戏插件，由 NoneBot2 版本移植至 OlivOS。支持 QQ 频道账号绑定（.bind）。",
+    "priority": 30000,
+    "svn": 4,
+    "compatible_svn": 190,
+    "message_mode": "old_string",
+    "support": [
+        {
+            "sdk": "onebot",
+            "platform": "qq",
+            "model": "all"
+        },
+        {
+            "sdk": "all",
+            "platform": "all",
+            "model": "all"
+        }
+    ]
+}
