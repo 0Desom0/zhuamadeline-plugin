@@ -365,6 +365,42 @@ def _prepare_passive_reply(message, event):
     )
 
 
+def _send_passive_reply(message, event):
+    '''发送严格的被动回复；QQ Guild V2 显式携带 msg_id，禁止回退主动消息。'''
+    prepared = _prepare_passive_reply(message, event)
+    plugin_event = getattr(event, '_olivos', None)
+    if plugin_event is None:
+        return None
+    extend = getattr(plugin_event.data, 'extend', {}) or {}
+    strict_qq_reply = (
+        plugin_event.platform.get('sdk') == 'qqGuildv2_link'
+        and extend.get('flag_from_qq', False)
+    )
+    if strict_qq_reply:
+        try:
+            reply_msg_id = extend.get('reply_msg_id') or getattr(event, 'message_id', None)
+            send_api = getattr(getattr(plugin_event, 'indeAPI', None), 'send_qq_message', None)
+            if reply_msg_id is not None and callable(send_api):
+                if hasattr(event, 'group_id'):
+                    chat_type = 'qq_group'
+                    chat_id = getattr(plugin_event.data, 'group_id', event.group_id)
+                else:
+                    chat_type = 'qq_private'
+                    chat_id = getattr(plugin_event.data, 'user_id', event.user_id)
+                return send_api(
+                    chat_type,
+                    chat_id,
+                    prepared,
+                    reply_msg_id=str(reply_msg_id),
+                    quote_msg_id=str(getattr(event, 'message_id', reply_msg_id)),
+                )
+            log(4, 'QQ Guild V2 被动回复缺少 msg_id 或发送接口，消息未发送')
+        except Exception:
+            log(4, 'QQ Guild V2 被动回复接口异常，消息未发送:\n' + traceback.format_exc())
+        return {}
+    return plugin_event.reply(prepared)
+
+
 # ---------------------------------------------------------------------------
 # 账号绑定（QQ 频道 / 官方机器人等平台的 ID -> 原 QQ 号数据映射）
 # ---------------------------------------------------------------------------
@@ -742,12 +778,26 @@ class Bot(object):
         _apply_guildv2_extend(ev, send_type, target_id)
         return ev.send(send_type, target_id, _prepare_outgoing(message, ev))
 
+    async def _send_contextual_message(self, send_type, target_id, message):
+        '''当前会话内按被动回复发送；跨会话与定时任务才使用主动发送。'''
+        current_event = _current_event.get()
+        if isinstance(current_event, MessageEvent):
+            matched = False
+            if send_type == 'group' and isinstance(current_event, GroupMessageEvent):
+                matched = str(target_id) == str(current_event.group_id)
+            elif send_type == 'private' and isinstance(current_event, PrivateMessageEvent):
+                matched = str(target_id) == str(current_event.user_id)
+            if matched:
+                _send_passive_reply(message, current_event)
+                return {}
+        return await self._send_active_message(send_type, target_id, message)
+
     # ---- 消息发送 ----
     async def send_group_msg(self, group_id=None, message=None, **kwargs):
-        return await self._send_active_message('group', group_id, message)
+        return await self._send_contextual_message('group', group_id, message)
 
     async def send_private_msg(self, user_id=None, message=None, **kwargs):
-        return await self._send_active_message('private', user_id, message)
+        return await self._send_contextual_message('private', user_id, message)
 
     async def send_msg(self, message_type='group', group_id=None, user_id=None,
                        message=None, **kwargs):
@@ -823,9 +873,7 @@ class Bot(object):
                         if content is not None and str(content) != '':
                             node_contents.append(str(content))
                 if node_contents:
-                    current_event._olivos.reply(
-                        _prepare_passive_reply('\n\n'.join(node_contents), current_event),
-                    )
+                    _send_passive_reply('\n\n'.join(node_contents), current_event)
                 return {}
             # 绑定平台上改写转发节点内容中的 @段
             if _platform_needs_bind(ev) and isinstance(messages, list):
@@ -971,7 +1019,7 @@ class Matcher(object):
             return
         if message is None or str(message) == '':
             return
-        event._olivos.reply(_prepare_passive_reply(message, event))
+        _send_passive_reply(message, event)
 
     async def finish(self, message=None, at_sender=False, **kwargs):
         await self.send(message, at_sender=at_sender, **kwargs)
