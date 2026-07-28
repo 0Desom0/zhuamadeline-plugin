@@ -1,13 +1,14 @@
-from PIL import Image, ImageDraw, ImageFont, ImageSequence, ImageFilter
-from .pathshim import Path
-import re
-import math
 import asyncio
+import math
+import re
 import uuid
-from .config import save_dir, font_path, full_path
-from .function import open_data
+
 from nonebot.adapters.onebot.v11 import MessageSegment
-from nonebot.exception import FinishedException
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageSequence
+
+from .config import font_path, full_path, save_dir
+from .function import open_data
+from .pathshim import Path
 
 # 字体设置
 font_size = 24  # 基础字体大小
@@ -484,14 +485,16 @@ def _process_static_image_sync(text1, image_path, text2, max_chars, center, user
 # 以下为消息发送相关函数
 
 # 文本消息转图片的触发阈值（OlivOS 移植版调整）：
-# 短消息直接以纯文本发送；只有商店、成就列表、批量道具结果这类
-# 很长的文本才合成图片。两个阈值满足其一即转图片，可按需调整。
+# 默认永不合成图片，仅由允许列表中的调用点显式传 render_image=True。
+# 显式允许后，两个阈值满足其一才转图，可按需调整。
 TEXT_TO_IMAGE_MIN_LINES = 13   # 超过该行数转图片
 TEXT_TO_IMAGE_MIN_CHARS = 300  # 或超过该字符数转图片
 
 
-def should_render_image(text) -> bool:
-    """判断文本是否长到需要合成图片发送"""
+def should_render_image(text, render_image=False) -> bool:
+    """仅在调用方明确允许时判断文本是否需要合成图片"""
+    if not render_image:
+        return False
     try:
         s = str(text)
         return (s.count('\n') + 1 > TEXT_TO_IMAGE_MIN_LINES
@@ -500,10 +503,18 @@ def should_render_image(text) -> bool:
         return False
 
 
-async def send_image_or_text(user_id = None, handler = None, text = "", at_sender=False, forward_text=None, max_chars=30):
+async def send_image_or_text(
+    user_id=None,
+    handler=None,
+    text="",
+    at_sender=False,
+    forward_text=None,
+    max_chars=30,
+    render_image=False,
+):
     """发送图文消息的便捷函数（短文本直发，长文本合成图片）"""
     img = None
-    if should_render_image(text):
+    if should_render_image(text, render_image=render_image):
         img = await generate_image_with_text(
             text1=text,
             image_path=None,
@@ -512,13 +523,24 @@ async def send_image_or_text(user_id = None, handler = None, text = "", at_sende
             center=False,
             user_id=user_id
         )
-    message = (forward_text or "") + (MessageSegment.image(img) if img else text)
+    if img:
+        message = MessageSegment.image(img) + (forward_text or "")
+    else:
+        message = (forward_text or "") + text
     await handler.finish(message, at_sender=at_sender)
 
-async def not_finish_send_image_or_text(user_id = None, handler = None, text = "", at_sender=False, forward_text=None, max_chars=30):
+async def not_finish_send_image_or_text(
+    user_id=None,
+    handler=None,
+    text="",
+    at_sender=False,
+    forward_text=None,
+    max_chars=30,
+    render_image=False,
+):
     """发送图文消息的便捷函数(非finish)（短文本直发，长文本合成图片）"""
     img = None
-    if should_render_image(text):
+    if should_render_image(text, render_image=render_image):
         img = await generate_image_with_text(
             text1=text,
             image_path=None,
@@ -527,12 +549,26 @@ async def not_finish_send_image_or_text(user_id = None, handler = None, text = "
             center=False,
             user_id=user_id
         )
-    message = (forward_text or "") + (MessageSegment.image(img) if img else text)
+    if img:
+        message = MessageSegment.image(img) + (forward_text or "")
+    else:
+        message = (forward_text or "") + text
     await handler.send(message, at_sender=at_sender)
 
-async def send_image_or_text_forward(user_id, handler, text, forward_text, bot, bot_id, group_id, max_chars=30, at_sender=False):
+async def send_image_or_text_forward(
+    user_id,
+    handler,
+    text,
+    forward_text,
+    bot,
+    bot_id,
+    group_id,
+    max_chars=30,
+    at_sender=False,
+    render_image=False,
+):
     """通过转发消息发送图文（短文本直发，长文本合成图片）"""
-    if not should_render_image(text):
+    if not should_render_image(text, render_image=render_image):
         # 短文本直接发送，不再合成图片
         await handler.finish(text, at_sender=at_sender)
         return
@@ -545,33 +581,14 @@ async def send_image_or_text_forward(user_id, handler, text, forward_text, bot, 
         user_id=user_id
     )
     if img:
-        await handler.finish(forward_text + MessageSegment.image(img), at_sender=at_sender)
+        await handler.finish(MessageSegment.image(img) + forward_text, at_sender=at_sender)
     else:
-        # 移植加固：部分调用点误把 event 当 bot 传入（原版被图片分支掩盖），
-        # 且图片生成失败（如字体缺失）时应退化为普通文本回复而不是报错
-        if hasattr(bot, "call_api"):
-            try:
-                msg_list = [{
-                    "type": "node",
-                    "data": {
-                        "name": forward_text,
-                        "uin": bot_id,
-                        "content": text
-                    }
-                }]
-                await bot.call_api("send_group_forward_msg", group_id=group_id, messages=msg_list)
-                await handler.finish()
-            except FinishedException:
-                raise
-            except Exception:
-                await handler.finish(text, at_sender=at_sender)
-        else:
-            await handler.finish(text, at_sender=at_sender)
+        await handler.finish(text, at_sender=at_sender)
 
-async def auto_send_message(text, bot, group_id, forward_text=None, max_chars=30):
+async def auto_send_message(text, bot, group_id, forward_text=None, max_chars=30, render_image=False):
     """自动发送消息到群组（短文本直发，长文本合成图片）"""
     img = None
-    if should_render_image(text):
+    if should_render_image(text, render_image=render_image):
         img = await generate_image_with_text(
             text1=text,
             image_path=None,
@@ -580,5 +597,8 @@ async def auto_send_message(text, bot, group_id, forward_text=None, max_chars=30
             center=False,
             user_id=None
         )
-    message = (forward_text or "") + (MessageSegment.image(img) if img else text)
+    if img:
+        message = MessageSegment.image(img) + (forward_text or "")
+    else:
+        message = (forward_text or "") + text
     await bot.send_group_msg(group_id=group_id, message=message)

@@ -28,7 +28,7 @@ from .list2 import *
 from .list3 import *
 from .whitelist import whitelist_rule
 from .config import *
-from .backup import backup_user_data
+from .backup import start_backup_thread
 from .text_image_text import generate_image_with_text, send_image_or_text_forward, send_image_or_text
 
 
@@ -2242,11 +2242,9 @@ async def handle_backup(bot: Bot, event: GroupMessageEvent):
         return
     group_id = event.group_id
     try:
-        success = await backup_user_data(bot, group_id)
-        if success:
-            logger.success("手动备份已完成")
-        else:
-            logger.error("手动备份失败，请检查日志")
+        if start_backup_thread(bot, group_id, name="manual"):
+            await backup_cmd.finish("备份任务已提交，完成后会在群内通知。")
+        await backup_cmd.finish("备份任务创建失败，请检查日志。")
     except FinishedException:
         raise
     except Exception as e:

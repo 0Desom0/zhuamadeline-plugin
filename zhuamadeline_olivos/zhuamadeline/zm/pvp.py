@@ -683,11 +683,27 @@ async def madeline_pvp_event(user_data, user_id, nickname, message, bot):
     if kicked_user_id:
         forward_text += MessageSegment.at(kicked_user_id)
     # 发送挑战结果
-    await not_finish_send_image_or_text(user_id, message, pk_text, True, forward_text, 28)
+    await not_finish_send_image_or_text(
+        user_id,
+        message,
+        pk_text,
+        True,
+        forward_text,
+        28,
+        render_image=True,
+    )
 
     # 发送结束结果（如果有）
     if set_final:
-        await send_image_or_text(user_id, message, text, False, at_text, 20)
+        await send_image_or_text(
+            user_id,
+            message,
+            text,
+            False,
+            at_text,
+            20,
+            render_image=True,
+        )
         
 
 # .jjc内容
@@ -798,7 +814,8 @@ async def jjc_handle(bot: Bot, event: GroupMessageEvent):
         bot,
         event.self_id,
         event.group_id,
-        50
+        50,
+        render_image=True,
     )
     
 
@@ -866,4 +883,11 @@ async def check_pvp_end_job():
     
     # 发送奖励公告消息
     text += f"\n22：00了，时间太晚了，Madeline竞技场已经关闭，本局游戏强制结束！\n擂台上的玩家将获得{reward}+{timeReward}={total_reward}草莓的奖励！\n明天见哦！（＾∀＾●）ﾉｼ"
-    await auto_send_message(text + guess_end_text, bot, group_id, forward_text = at_text, max_chars = 30)
+    await auto_send_message(
+        text + guess_end_text,
+        bot,
+        group_id,
+        forward_text=at_text,
+        max_chars=30,
+        render_image=True,
+    )

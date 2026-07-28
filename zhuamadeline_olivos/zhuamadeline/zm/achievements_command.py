@@ -47,7 +47,15 @@ async def cjlist_handle(bot: Bot, event: GroupMessageEvent):
             msg += f"- {name}\n"
         msg += "\n"
     
-    await send_image_or_text(user_id, cjlist, msg.strip(), True, None, 25)
+    await send_image_or_text(
+        user_id,
+        cjlist,
+        msg.strip(),
+        True,
+        None,
+        25,
+        render_image=True,
+    )
 
 #查看成就信息
 ckcj = on_command('成就', aliases={"cj", "achievement", "achievements"}, permission=GROUP, priority=1, block=True, rule=whitelist_rule)
@@ -107,7 +115,18 @@ async def ckcjlist_handle(bot: Bot, event: GroupMessageEvent):
         for k, _ in achievements_list:
             text += f"\n· {k}"
         
-        await send_image_or_text_forward(user_id, ckcjlist, text, '成就列表', bot, event.self_id, event.group_id, 30, True)
+        await send_image_or_text_forward(
+            user_id,
+            ckcjlist,
+            text,
+            '成就列表',
+            bot,
+            event.self_id,
+            event.group_id,
+            30,
+            True,
+            render_image=True,
+        )
 
     else:
         msg = "请先抓Madeline再来看成就哦！"

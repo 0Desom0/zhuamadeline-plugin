@@ -83,7 +83,7 @@ async def madeline_shop(bot: Bot, event: Event):
     item_text += shop_list(shop_data["item"])
     
     # 改为图片形式发送
-    await send_image_or_text(user_id, shop, item_text)
+    await send_image_or_text(user_id, shop, item_text, render_image=True)
 
 # 定时任务：每天 18:00 自动补货
 @scheduler.scheduled_job("cron", hour=18, minute=0)

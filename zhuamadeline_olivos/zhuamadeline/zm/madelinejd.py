@@ -201,7 +201,18 @@ async def mymadeline_handle(bot: Bot, event: GroupMessageEvent, arg: Message = C
     # 半夜0点整查看库存时，隐藏并返回特殊事件
     if hour == 0 and minute == 0 and 0 <= second <= 30:
         # 发送图片
-        await send_image_or_text_forward(user_id, mymadeline, "please give me your eyes", '藏品库存室', bot, event.self_id, event.group_id, 30, True)
+        await send_image_or_text_forward(
+            user_id,
+            mymadeline,
+            "please give me your eyes",
+            '藏品库存室',
+            bot,
+            event.self_id,
+            event.group_id,
+            30,
+            True,
+            render_image=True,
+        )
         return
     
     # 如果没有输入猎场号，默认展示所有猎场的库存
@@ -239,7 +250,18 @@ async def display_liechang_inventory(bot: Bot, event: GroupMessageEvent, liechan
     nickname = user_info.get("nickname", "未知昵称")
     msg = f'这是 [{nickname}] 的\n{liechang_number}号猎场的Madeline库存\n{sorted_madelines}'
     # 发送图片
-    await send_image_or_text_forward(user_id, mymadeline, msg, '库存查询室', bot, event.self_id, event.group_id, 30, True)
+    await send_image_or_text_forward(
+        user_id,
+        mymadeline,
+        msg,
+        '库存查询室',
+        bot,
+        event.self_id,
+        event.group_id,
+        30,
+        True,
+        render_image=True,
+    )
 
 
 # 查询并展示所有猎场的库存
@@ -271,7 +293,18 @@ async def display_all_liechang_inventory(bot: Bot, event: GroupMessageEvent, use
     for sorted_madeline in all_sorted_madelines:
         msg += "\n\n========================\n\n" + sorted_madeline
     # 发送图片
-    await send_image_or_text_forward(user_id, mymadeline, msg, '库存查询室', bot, event.self_id, event.group_id, 30, True)
+    await send_image_or_text_forward(
+        user_id,
+        mymadeline,
+        msg,
+        '库存查询室',
+        bot,
+        event.self_id,
+        event.group_id,
+        30,
+        True,
+        render_image=True,
+    )
 
 # 查询进度，具体函数也丢function.py里了
 jd = on_command('jd', aliases={"madelinejd"}, permission=GROUP, priority=1, block=True, rule=whitelist_rule)

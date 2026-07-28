@@ -30,7 +30,7 @@ from .function import *
 from .event import buff2_change_status, outofdanger
 from .pvp import *
 from .whitelist import whitelist_rule
-from .text_image_text import generate_image_with_text, send_image_or_text_forward, send_image_or_text
+from .text_image_text import send_image_or_text_forward, send_image_or_text
 
 __all__ = [
     "pray",
@@ -376,20 +376,7 @@ async def pray_handle(bot: Bot, event: GroupMessageEvent, arg: Message = Command
         f'{grade_msg}'
     )
     
-    # 生成图片消息
-    combined_img_path = await generate_image_with_text(
-        text1=top_text,
-        image_path=img,
-        text2=bottom_text,
-        max_chars=20,
-        center=True,
-        user_id=str(user_id)
-    )
-    
-    if combined_img_path:
-        message = MessageSegment.image(combined_img_path)
-    else:
-        message = f"{top_text}\n"+ MessageSegment.image(img) +f"\n{bottom_text}"
+    message = MessageSegment.image(img) + f"\n{top_text}\n{bottom_text}"
     
     save_data(full_path, data)
     
@@ -2233,20 +2220,7 @@ async def daoju_handle(event: GroupMessageEvent, bot: Bot, arg: Message = Comman
                         f'{grade_msg}'
                     )
 
-                    # 生成图片消息
-                    combined_img_path = await generate_image_with_text(
-                        text1=top_text,
-                        image_path=img,
-                        text2=bottom_text,
-                        max_chars=20,
-                        center=True,
-                        user_id=str(user_id)
-                    )
-
-                    if combined_img_path:
-                        message = MessageSegment.image(combined_img_path)
-                    else:
-                        message = f"{top_text}\n"+MessageSegment.image(img)+"\n{bottom_text}"
+                    message = MessageSegment.image(img) + f"\n{top_text}\n{bottom_text}"
 
                     await daoju.finish(message, at_sender=True)
                 #使用失败
@@ -2760,20 +2734,7 @@ async def handle_batch_capture(
         f"{exp_grade_msg}"
     )
     
-    # 生成图片消息
-    combined_img_path = await generate_image_with_text(
-        text1=top_text,
-        image_path=img,
-        text2=bottom_text,
-        max_chars=25,
-        center=True,
-        user_id=str(user_id)
-    )
-    
-    if combined_img_path:
-        message = MessageSegment.image(combined_img_path)
-    else:
-        message = f"{top_text}\n"+ MessageSegment.image(img) +f"\n{bottom_text}"
+    message = MessageSegment.image(img) + f"\n{top_text}\n{bottom_text}"
     
     # 发送结果
     await daoju.finish(message, at_sender = True)

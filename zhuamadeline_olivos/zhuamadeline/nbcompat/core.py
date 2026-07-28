@@ -59,6 +59,73 @@ _runtime_started = False
 _runtime_lock = threading.Lock()
 
 
+class _DataTransactionGate(object):
+    '''允许普通命令并发，但让定时任务独占业务数据事务'''
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._readers = 0
+        self._writer = False
+        self._writer_thread_id = None
+        self._writer_depth = 0
+        self._waiting_writers = 0
+
+    def try_acquire_read(self):
+        with self._condition:
+            if self._writer or self._waiting_writers:
+                return False
+            self._readers += 1
+            return True
+
+    def release_read(self):
+        with self._condition:
+            self._readers -= 1
+            if self._readers == 0:
+                self._condition.notify_all()
+
+    def acquire_write(self):
+        thread_id = threading.get_ident()
+        with self._condition:
+            if self._writer and self._writer_thread_id == thread_id:
+                self._writer_depth += 1
+                return
+            self._waiting_writers += 1
+            try:
+                while self._writer or self._readers:
+                    self._condition.wait()
+                self._writer = True
+                self._writer_thread_id = thread_id
+                self._writer_depth = 1
+            finally:
+                self._waiting_writers -= 1
+
+    def release_write(self):
+        with self._condition:
+            if self._writer_thread_id != threading.get_ident():
+                raise RuntimeError('当前线程未持有数据写事务')
+            self._writer_depth -= 1
+            if self._writer_depth:
+                return
+            self._writer = False
+            self._writer_thread_id = None
+            self._condition.notify_all()
+
+
+_data_transaction_gate = _DataTransactionGate()
+
+
+def run_data_write_worker(func, *args, **kwargs):
+    '''在线程中以独占业务数据事务执行同步函数或协程函数'''
+    _data_transaction_gate.acquire_write()
+    try:
+        result = func(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return asyncio.run(result)
+        return result
+    finally:
+        _data_transaction_gate.release_write()
+
+
 def log(level, message):
     '''统一日志出口，Proc 尚未就绪时退化为 print'''
     try:
@@ -246,6 +313,58 @@ def _build_templet(message):
     return OlivOS.messageAPI.Message_templet('old_string', str(message))
 
 
+def _images_first_templet(message):
+    '''把图片移到可见文字之前，保留回复段作为最前面的元数据'''
+    message_obj = _build_templet(message)
+    if not message_obj.active:
+        return message_obj
+    reply_items = []
+    image_items = []
+    other_items = []
+    for message_item in message_obj.data:
+        if isinstance(message_item, OlivOS.messageAPI.PARA.reply):
+            reply_items.append(message_item)
+        elif isinstance(message_item, OlivOS.messageAPI.PARA.image):
+            image_items.append(message_item)
+        else:
+            other_items.append(message_item)
+    return OlivOS.messageAPI.Message_templet(
+        'olivos_para',
+        reply_items + image_items + other_items,
+    )
+
+
+def _prepare_passive_reply(message, event):
+    '''被动命令统一引用触发消息，并把原有 at 降级为普通用户标识'''
+    message_obj = _build_templet(message)
+    image_items = []
+    other_items = []
+    if message_obj.active:
+        for message_item in message_obj.data:
+            if isinstance(message_item, OlivOS.messageAPI.PARA.reply):
+                continue
+            if isinstance(message_item, OlivOS.messageAPI.PARA.at):
+                user_id = str(message_item.data.get('id', '') or '')
+                user_name = str(message_item.data.get('name', '') or '')
+                user_label = user_name or ('全体成员' if user_id == 'all' else user_id)
+                if user_label:
+                    other_items.append(OlivOS.messageAPI.PARA.text('[%s]' % user_label))
+                continue
+            if isinstance(message_item, OlivOS.messageAPI.PARA.image):
+                image_items.append(message_item)
+            else:
+                other_items.append(message_item)
+
+    reply_items = []
+    message_id = getattr(event, 'message_id', None)
+    if message_id is not None and str(message_id) != '':
+        reply_items.append(OlivOS.messageAPI.PARA.reply(str(message_id)))
+    return OlivOS.messageAPI.Message_templet(
+        'olivos_para',
+        reply_items + image_items + other_items,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 账号绑定（QQ 频道 / 官方机器人等平台的 ID -> 原 QQ 号数据映射）
 # ---------------------------------------------------------------------------
@@ -329,14 +448,14 @@ def _apply_bind_inbound(event):
 
 
 def _prepare_outgoing(message, plugin_event):
-    '''出站处理：绑定平台上把 @QQ号 反向改写为 @平台ID，再包装为消息模板'''
+    '''出站处理：改写绑定平台的 at，并统一采用图片在前的图文顺序'''
     out = str(message)
     try:
         if plugin_event is not None and _platform_needs_bind(plugin_event):
             out = _rewrite_at_ids(out, _load_bindings()['rev'])
     except Exception:
         pass
-    return _build_templet(out)
+    return _images_first_templet(out)
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +545,7 @@ def _pick_bot_hash():
     qq_hashes = []
     for bot_hash, bot_info in bot_dict.items():
         try:
-            if bot_info.platform.get('platform') == 'qq':
+            if bot_info.platform.get('platform') in ('qq', 'qqGuild'):
                 qq_hashes.append(bot_hash)
         except Exception:
             pass
@@ -436,9 +555,29 @@ def _pick_bot_hash():
 
 
 gBotFlagFromQQ = {}  # bot_hash -> 最近一次消息是否来自官方 API 的 QQ 群（qqGuildv2）
+gBotGroupFlagFromQQ = {}  # (bot_hash, group_id) -> 是否为 QQ 群而非频道
+_QQ_OPENID_PATTERN = re.compile(r'^[0-9a-fA-F]{32}$')
 
 
-def _apply_guildv2_extend(ev, send_type):
+def _guildv2_flag_from_qq(ev, target_id=None):
+    try:
+        bot_hash = getattr(ev.bot_info, 'hash', None)
+        route_key = (bot_hash, str(target_id))
+        if target_id is not None and route_key in gBotGroupFlagFromQQ:
+            return gBotGroupFlagFromQQ[route_key]
+        target_text = '' if target_id is None else str(target_id)
+        # QQ 群/C2C OpenID 为 32 位十六进制串，频道 ID 则为十进制雪花 ID。
+        # 定时任务可能早于首条入站消息，需在没有路由缓存时据此判定。
+        if _QQ_OPENID_PATTERN.fullmatch(target_text):
+            return True
+        if target_text.isdecimal():
+            return False
+        return bool(gBotFlagFromQQ.get(bot_hash, False))
+    except Exception:
+        return False
+
+
+def _apply_guildv2_extend(ev, send_type, target_id=None):
     '''qqGuildv2 主动发送路由标志（参照官方插件模板 send_message_force）
 
     官方机器人（qqGuildv2）同时服务频道与 QQ 群，主动发送需要
@@ -448,7 +587,7 @@ def _apply_guildv2_extend(ev, send_type):
     try:
         if ev.platform.get('sdk') != 'qqGuildv2_link':
             return
-        if not gBotFlagFromQQ.get(getattr(ev.bot_info, 'hash', None)):
+        if not _guildv2_flag_from_qq(ev, target_id):
             return
         extend = getattr(ev.data, 'extend', {}) or {}
         extend.update(
@@ -469,17 +608,88 @@ def _make_fake_event(bot_hash):
     if bot_hash not in bot_dict:
         return None
     try:
-        fake_event = OlivOS.API.Event(
-            OlivOS.contentAPI.fake_sdk_event(
-                bot_info=bot_dict[bot_hash],
-                fakename=PLUGIN_FAKENAME,
-            ),
-            gProc.log,
+        sdk_event = OlivOS.contentAPI.fake_sdk_event(
+            bot_info=bot_dict[bot_hash],
+            fakename=PLUGIN_FAKENAME,
         )
+        try:
+            fake_event = OlivOS.API.Event(sdk_event, gProc.log, Proc=gProc)
+        except TypeError:
+            fake_event = OlivOS.API.Event(sdk_event, gProc.log)
         return fake_event
     except Exception:
         log(4, 'fake event 构造失败:\n' + traceback.format_exc())
         return None
+
+
+def _send_guildv2_markdown_message(ev, send_type, target_id, message):
+    '''主动消息含 at 时，用 QQ Guild V2 Markdown 发送可见文字与 mention'''
+    out = str(message)
+    try:
+        if _platform_needs_bind(ev):
+            out = _rewrite_at_ids(out, _load_bindings()['rev'])
+    except Exception:
+        pass
+
+    message_obj = _build_templet(out)
+    if not message_obj.active:
+        return None
+
+    has_at = False
+    markdown_parts = []
+    media_items = []
+    for message_item in message_obj.data:
+        if isinstance(message_item, OlivOS.messageAPI.PARA.at):
+            has_at = True
+            user_id = str(message_item.data.get('id', '') or '')
+            if user_id:
+                markdown_tag = getattr(OlivOS.qqGuildv2SDK, 'markdown_tag', None)
+                at_user = getattr(markdown_tag, 'at_user', None)
+                if callable(at_user):
+                    markdown_parts.append(at_user(user_id))
+                else:
+                    escaped_user_id = user_id.replace('&', '&amp;').replace('"', '&quot;')
+                    markdown_parts.append(
+                        '<qqbot-at-user id="%s" />' % escaped_user_id,
+                    )
+        elif isinstance(message_item, OlivOS.messageAPI.PARA.text):
+            markdown_parts.append(str(message_item.data.get('text', '') or ''))
+        elif not isinstance(message_item, OlivOS.messageAPI.PARA.reply):
+            media_items.append(message_item)
+
+    if not has_at:
+        return None
+
+    if media_items:
+        _apply_guildv2_extend(ev, send_type, target_id)
+        ev.send(
+            send_type,
+            target_id,
+            OlivOS.messageAPI.Message_templet('olivos_para', media_items),
+        )
+
+    markdown_content = ''.join(markdown_parts).strip()
+    if not markdown_content:
+        return {}
+
+    flag_from_qq = _guildv2_flag_from_qq(ev, target_id)
+    if send_type == 'group':
+        chat_type = 'qq_group' if flag_from_qq else 'guild_channel'
+    else:
+        chat_type = 'qq_private' if flag_from_qq else 'guild_private'
+
+    markdown_api = getattr(getattr(ev, 'indeAPI', None), 'create_markdown_message', None)
+    if not callable(markdown_api):
+        log(4, 'qqGuildV2 Markdown 接口不可用，含 at 的主动消息未发送')
+        return {}
+    result = markdown_api(
+        chat_type,
+        target_id,
+        {'content': markdown_content},
+    )
+    if isinstance(result, dict) and not result.get('active', False):
+        log(4, 'qqGuildV2 Markdown 主动消息发送失败: %s' % result)
+    return result
 
 
 class Bot(object):
@@ -505,22 +715,39 @@ class Bot(object):
             return self._event
         return _make_fake_event(self._bot_hash or _pick_bot_hash())
 
+    def _active_api_event(self):
+        bot_hash = self._bot_hash
+        if bot_hash is None and self._event is not None:
+            bot_hash = getattr(getattr(self._event, 'bot_info', None), 'hash', None)
+        return _make_fake_event(bot_hash or _pick_bot_hash())
+
+    async def _send_active_message(self, send_type, target_id, message):
+        source_ev = self._api_event()
+        if source_ev is None:
+            raise RuntimeError('没有可用的 bot 连接，无法发送消息')
+        # Bot.send_* 始终是主动发送。使用伪事件可避免改写当前被动事件的
+        # qqGuildV2 路由标志，也不会误复用其 msg_id/event_id。
+        ev = self._active_api_event() or source_ev
+
+        if ev.platform.get('sdk') == 'qqGuildv2_link' and '[CQ:at,' in str(message):
+            result = _send_guildv2_markdown_message(
+                ev,
+                send_type,
+                target_id,
+                message,
+            )
+            if result is not None:
+                return result
+
+        _apply_guildv2_extend(ev, send_type, target_id)
+        return ev.send(send_type, target_id, _prepare_outgoing(message, ev))
+
     # ---- 消息发送 ----
     async def send_group_msg(self, group_id=None, message=None, **kwargs):
-        ev = self._api_event()
-        if ev is None:
-            raise RuntimeError('没有可用的 bot 连接，无法发送群消息')
-        _apply_guildv2_extend(ev, 'group')
-        ev.send('group', group_id, _prepare_outgoing(message, ev))
-        return {}
+        return await self._send_active_message('group', group_id, message)
 
     async def send_private_msg(self, user_id=None, message=None, **kwargs):
-        ev = self._api_event()
-        if ev is None:
-            raise RuntimeError('没有可用的 bot 连接，无法发送私聊消息')
-        _apply_guildv2_extend(ev, 'private')
-        ev.send('private', user_id, _prepare_outgoing(message, ev))
-        return {}
+        return await self._send_active_message('private', user_id, message)
 
     async def send_msg(self, message_type='group', group_id=None, user_id=None,
                        message=None, **kwargs):
@@ -577,6 +804,29 @@ class Bot(object):
             raise RuntimeError('没有可用的 bot 连接')
         if api == 'send_group_forward_msg':
             messages = kwargs.get('messages')
+            group_id = kwargs.get('group_id')
+            current_event = _current_event.get()
+            if (
+                ev.platform.get('sdk') == 'qqGuildv2_link'
+                and current_event is not None
+                and str(getattr(current_event, 'group_id', '')) == str(group_id)
+            ):
+                # QQ Guild V2 没有合并转发接口。命令内的被动转发消息改为
+                # 引用触发消息的普通回复，仍统一剥离 at 并调整图文顺序。
+                node_contents = []
+                if isinstance(messages, list):
+                    for node in messages:
+                        try:
+                            content = node.get('data', {}).get('content')
+                        except Exception:
+                            content = None
+                        if content is not None and str(content) != '':
+                            node_contents.append(str(content))
+                if node_contents:
+                    current_event._olivos.reply(
+                        _prepare_passive_reply('\n\n'.join(node_contents), current_event),
+                    )
+                return {}
             # 绑定平台上改写转发节点内容中的 @段
             if _platform_needs_bind(ev) and isinstance(messages, list):
                 rev = _load_bindings()['rev']
@@ -589,14 +839,15 @@ class Bot(object):
                         except Exception:
                             pass
             ev.send_group_forward_msg(
-                kwargs.get('group_id'),
+                group_id,
                 messages,
             )
             return {}
         if api == 'send_group_msg':
-            _apply_guildv2_extend(ev, 'group')
-            ev.send('group', kwargs.get('group_id'), _prepare_outgoing(kwargs.get('message'), ev))
-            return {}
+            return await self.send_group_msg(
+                group_id=kwargs.get('group_id'),
+                message=kwargs.get('message'),
+            )
         if api == 'set_msg_emoji_like':
             ev.set_msg_emoji_like(
                 kwargs.get('message_id'),
@@ -621,7 +872,7 @@ def get_bots():
         return bots
     for bot_hash, bot_info in gProc.Proc_data.get('bot_info_dict', {}).items():
         try:
-            if bot_info.platform.get('platform') == 'qq':
+            if bot_info.platform.get('platform') in ('qq', 'qqGuild'):
                 bots[str(bot_info.id)] = Bot(bot_hash=bot_hash)
         except Exception:
             pass
@@ -720,10 +971,7 @@ class Matcher(object):
             return
         if message is None or str(message) == '':
             return
-        out = str(message)
-        if at_sender:
-            out = str(MessageSegment.at(event.get_user_id())) + ' ' + out
-        event._olivos.reply(_prepare_outgoing(out, event._olivos))
+        event._olivos.reply(_prepare_passive_reply(message, event))
 
     async def finish(self, message=None, at_sender=False, **kwargs):
         await self.send(message, at_sender=at_sender, **kwargs)
@@ -876,6 +1124,18 @@ class _Job(object):
         self.kwargs = kwargs
         self.next_run = None
         self.running = False
+        self._state_lock = threading.Lock()
+
+    def claim(self):
+        with self._state_lock:
+            if self.running:
+                return False
+            self.running = True
+            return True
+
+    def release(self):
+        with self._state_lock:
+            self.running = False
 
     def compute_next(self, now):
         if self.trigger == 'interval':
@@ -906,6 +1166,7 @@ class _Scheduler(object):
     def __init__(self):
         self.jobs = []
         self._thread = None
+        self._jobs_lock = threading.RLock()
 
     def scheduled_job(self, trigger, id=None, **kwargs):
         def decorator(func):
@@ -919,17 +1180,20 @@ class _Scheduler(object):
                 int(kwargs.get('seconds', 60))
             else:
                 raise ValueError('nbcompat scheduler 不支持的 trigger: %s' % trigger)
-            self.jobs.append(_Job(func, trigger, id, kwargs))
+            with self._jobs_lock:
+                self.jobs.append(_Job(func, trigger, id, kwargs))
             return func
         return decorator
 
     def add_job(self, func, trigger='interval', id=None, **kwargs):
         job = _Job(func, trigger, id, kwargs)
-        self.jobs.append(job)
+        with self._jobs_lock:
+            self.jobs.append(job)
         return job
 
     def remove_job(self, job_id):
-        self.jobs = [j for j in self.jobs if j.id != job_id]
+        with self._jobs_lock:
+            self.jobs = [j for j in self.jobs if j.id != job_id]
 
     def start(self):
         if self._thread is not None:
@@ -941,7 +1205,9 @@ class _Scheduler(object):
 
     def _run(self):
         now = datetime.datetime.now()
-        for job in self.jobs:
+        with self._jobs_lock:
+            jobs = list(self.jobs)
+        for job in jobs:
             try:
                 job.compute_next(now)
             except Exception:
@@ -949,7 +1215,9 @@ class _Scheduler(object):
         while True:
             time.sleep(1)
             now = datetime.datetime.now()
-            for job in self.jobs:
+            with self._jobs_lock:
+                jobs = list(self.jobs)
+            for job in jobs:
                 try:
                     if job.next_run is None:
                         job.compute_next(now)
@@ -957,28 +1225,35 @@ class _Scheduler(object):
                     if now < job.next_run:
                         continue
                     job.compute_next(now)
-                    if job.running:
+                    if not self._submit(job):
                         log(3, '定时任务 %s 上一次尚未结束，跳过本次' % job.id)
-                        continue
-                    self._submit(job)
                 except Exception:
                     log(4, '定时任务调度异常 %s:\n%s' % (job.id, traceback.format_exc()))
 
     def _submit(self, job):
-        job.running = True  # 提交前置位，防止事件循环繁忙时同一任务重复入队
+        if not job.claim():
+            return False
 
-        async def runner():
+        def runner():
             try:
-                result = job.func()
-                if inspect.isawaitable(result):
-                    await result
+                run_data_write_worker(job.func)
             except Exception:
                 log(4, '定时任务执行异常 %s:\n%s' % (job.id, traceback.format_exc()))
             finally:
-                job.running = False
+                job.release()
 
-        if submit_coroutine(runner()) is None:
-            job.running = False
+        try:
+            worker = threading.Thread(
+                target=runner,
+                name='zhuamadeline-job-%s' % job.id,
+                daemon=True,
+            )
+            worker.start()
+            return True
+        except Exception:
+            job.release()
+            log(4, '定时任务线程启动失败 %s:\n%s' % (job.id, traceback.format_exc()))
+            return False
 
 
 scheduler = _Scheduler()
@@ -1125,7 +1400,7 @@ def _strip_leading_meta(raw_text, self_id):
         return text
 
 
-async def _dispatch_async(plugin_event, event):
+async def _dispatch_async_inner(plugin_event, event):
     bot = Bot(olivos_event=plugin_event)
     blocked = False
 
@@ -1211,6 +1486,16 @@ async def _dispatch_async(plugin_event, event):
     return blocked
 
 
+async def _dispatch_async(plugin_event, event):
+    # 短轮询不会阻塞公共事件循环；同步 try-acquire 也避免取消时泄漏读锁。
+    while not _data_transaction_gate.try_acquire_read():
+        await asyncio.sleep(0.05)
+    try:
+        return await _dispatch_async_inner(plugin_event, event)
+    finally:
+        _data_transaction_gate.release_read()
+
+
 def dispatch_group_message(plugin_event, Proc):
     '''OlivOS group_message 事件入口（由 main.py 调用）'''
     global gProc
@@ -1218,7 +1503,12 @@ def dispatch_group_message(plugin_event, Proc):
     try:
         if plugin_event.platform.get('sdk') == 'qqGuildv2_link':
             extend = getattr(plugin_event.data, 'extend', {}) or {}
-            gBotFlagFromQQ[plugin_event.bot_info.hash] = bool(extend.get('flag_from_qq'))
+            flag_from_qq = bool(extend.get('flag_from_qq'))
+            bot_hash = plugin_event.bot_info.hash
+            gBotFlagFromQQ[bot_hash] = flag_from_qq
+            group_id = getattr(plugin_event.data, 'group_id', None)
+            if group_id is not None:
+                gBotGroupFlagFromQQ[(bot_hash, str(group_id))] = flag_from_qq
     except Exception:
         pass
 

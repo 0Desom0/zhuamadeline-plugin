@@ -30,7 +30,7 @@ from .render import *
 from .event import event_happen, outofdanger
 from .pvp import madeline_pvp_event, pvp_opening, check_liechang
 from .whitelist import whitelist_rule
-from .text_image_text import generate_image_with_text, send_image_or_text_forward, send_image_or_text
+from .text_image_text import send_image_or_text_forward, send_image_or_text
 
 __all__ = [
     "qhlc",
@@ -467,23 +467,7 @@ async def zhuamadeline(bot: Bot, event: GroupMessageEvent):
 
         bottom_text += extra_text
 
-        combined_img_path = await generate_image_with_text(
-            text1=top_text,
-            image_path=img,
-            text2=bottom_text,
-            max_chars=20,
-            center=True,
-            user_id=str(user_id)
-        )
-
-        if combined_img_path:
-            message = MessageSegment.image(combined_img_path)
-        else:
-            message = (
-                f"{top_text}\n"+
-                MessageSegment.image(img)+
-                f"{bottom_text}"
-            )
+        message = MessageSegment.image(img) + f"\n{top_text}\n{bottom_text}"
 
         await catch.finish(message, at_sender=True)
 
@@ -605,7 +589,7 @@ async def dailyjrrp(event: GroupMessageEvent):
     
     picture = Path(picture_str)
     
-    await jrrp.finish(reply_text+MessageSegment.image(picture), at_sender=True)
+    await jrrp.finish(MessageSegment.image(picture) + reply_text, at_sender=True)
 
 
 # 查看状态
