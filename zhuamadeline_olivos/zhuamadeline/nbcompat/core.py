@@ -806,33 +806,72 @@ class Bot(object):
         return await self.send_private_msg(user_id=user_id, message=message)
 
     # ---- 信息查询 ----
+    def _fallback_user_info(self, user_id, group_id=None):
+        '''资料接口不可用时返回 NoneBot 调用方可继续使用的最小信息。'''
+        nickname = str(user_id)
+        card = ''
+        current_event = _current_event.get()
+        if (
+            isinstance(current_event, MessageEvent)
+            and str(current_event.user_id) == str(user_id)
+        ):
+            nickname = current_event.sender.nickname or nickname
+            card = current_event.sender.card or nickname
+        result = {
+            'user_id': user_id,
+            'nickname': nickname,
+        }
+        if group_id is not None:
+            result.update({
+                'group_id': group_id,
+                'card': card or nickname,
+            })
+        return result
+
     async def get_stranger_info(self, user_id=None, no_cache=False, **kwargs):
         ev = self._api_event()
         if ev is None:
             raise RuntimeError('没有可用的 bot 连接')
-        res = ev.get_stranger_info(user_id)
+        fallback = self._fallback_user_info(user_id)
+        query_user_id = user_id
+        if _platform_needs_bind(ev):
+            query_user_id = _load_bindings()['rev'].get(str(user_id), user_id)
+        try:
+            res = ev.get_stranger_info(query_user_id)
+        except Exception:
+            log(3, 'get_stranger_info 调用异常，使用事件资料:\n' + traceback.format_exc())
+            return fallback
         if isinstance(res, dict) and res.get('active') and isinstance(res.get('data'), dict):
             data = res['data']
             return {
                 'user_id': data.get('id', user_id),
-                'nickname': data.get('name', str(user_id)),
+                'nickname': data.get('name') or fallback['nickname'],
             }
-        raise RuntimeError('get_stranger_info 调用失败: %s' % (res,))
+        return fallback
 
     async def get_group_member_info(self, group_id=None, user_id=None, **kwargs):
         ev = self._api_event()
         if ev is None:
             raise RuntimeError('没有可用的 bot 连接')
-        res = ev.get_group_member_info(group_id, user_id)
+        fallback = self._fallback_user_info(user_id, group_id=group_id)
+        query_user_id = user_id
+        if _platform_needs_bind(ev):
+            query_user_id = _load_bindings()['rev'].get(str(user_id), user_id)
+        try:
+            res = ev.get_group_member_info(group_id, query_user_id)
+        except Exception:
+            log(3, 'get_group_member_info 调用异常，使用事件资料:\n' + traceback.format_exc())
+            return fallback
         if isinstance(res, dict) and res.get('active') and isinstance(res.get('data'), dict):
             data = res['data']
+            nickname = data.get('name') or fallback['nickname']
             return {
                 'user_id': data.get('id', user_id),
                 'group_id': data.get('group_id', group_id),
-                'nickname': data.get('name', str(user_id)),
-                'card': data.get('card') or data.get('name', str(user_id)),
+                'nickname': nickname,
+                'card': data.get('card') or nickname,
             }
-        raise RuntimeError('get_group_member_info 调用失败: %s' % (res,))
+        return fallback
 
     async def get_login_info(self, **kwargs):
         ev = self._api_event()
