@@ -556,7 +556,8 @@ async def status_work_handle(bot: Bot, Bot_event: GroupMessageEvent):
                 Bot_event.self_id,
                 Bot_event.group_id,
                 30,
-                True
+                True,
+                render_image=True,
             )
             return
     else:
