@@ -454,7 +454,7 @@ def _platform_needs_bind(plugin_event):
         return False
 
 
-_AT_SEG_PATTERN = re.compile(r'(\[CQ:at,qq=)([^,\]]+)')
+_AT_SEG_PATTERN = re.compile(r'(\[CQ:at,(?:qq|id)=)([^,\]]+)')
 
 
 def _rewrite_at_ids(text, mapping):
@@ -520,6 +520,16 @@ def _to_id(value):
         return value
 
 
+def _event_id(plugin_event, value):
+    '''QQ Guild V2 的 OpenID 必须保持字符串，其他协议沿用原适配器类型。'''
+    try:
+        if plugin_event.platform.get('sdk') == 'qqGuildv2_link':
+            return str(value)
+    except Exception:
+        pass
+    return _to_id(value)
+
+
 class Event(object):
     '''事件基类'''
     pass
@@ -529,13 +539,13 @@ class MessageEvent(Event):
     def __init__(self, plugin_event):
         data = plugin_event.data
         self._olivos = plugin_event
-        self.user_id = _to_id(getattr(data, 'user_id', -1))
+        self.user_id = _event_id(plugin_event, getattr(data, 'user_id', -1))
         self.message_id = getattr(data, 'message_id', None)
         self.sender = _Sender(getattr(data, 'sender', {}), self.user_id)
         self.message = Message(getattr(data, 'message', ''))
         self.raw_message = str(getattr(data, 'raw_message', '') or self.message)
         try:
-            self.self_id = _to_id(plugin_event.base_info.get('self_id'))
+            self.self_id = _event_id(plugin_event, plugin_event.base_info.get('self_id'))
         except Exception:
             self.self_id = -1
         self.time = int(time.time())
@@ -553,7 +563,7 @@ class MessageEvent(Event):
 class GroupMessageEvent(MessageEvent):
     def __init__(self, plugin_event):
         MessageEvent.__init__(self, plugin_event)
-        self.group_id = _to_id(getattr(plugin_event.data, 'group_id', -1))
+        self.group_id = _event_id(plugin_event, getattr(plugin_event.data, 'group_id', -1))
         self.sub_type = getattr(plugin_event.data, 'sub_type', 'normal')
 
 

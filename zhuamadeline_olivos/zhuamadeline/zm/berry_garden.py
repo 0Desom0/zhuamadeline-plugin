@@ -24,13 +24,53 @@ garden_aliases = {
     '升级': ['upgrade', 'levelup', 'update' ,'提升等级']
 }
 
-# 全局更新 
+def _non_negative_int(value):
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def update_garden_production(garden: dict, current_time: int, base_reward: int):
+    """结算播种周期内已经完成的整小时产量。"""
+    garden["garden_berry"] = _non_negative_int(garden.get("garden_berry", 0))
+    if garden.get("isseed") != 1:
+        return
+
+    seed_time = int(garden.get("seed_time", current_time))
+    cycle_end_time = seed_time + 24 * 3600
+    last_update_time = int(garden.get("last_update_time", seed_time))
+    last_update_time = min(max(last_update_time, seed_time), cycle_end_time)
+    effective_end_time = min(current_time, cycle_end_time)
+    elapsed_hours = max(0, (effective_end_time - last_update_time) // 3600)
+
+    fert_hours = 0
+    if garden.get("isfert") == 1:
+        fert_time = int(garden.get("fert_time", 0))
+        fert_end_time = fert_time + 12 * 3600
+        for hour in range(elapsed_hours):
+            reward_time = last_update_time + (hour + 1) * 3600
+            if fert_time <= reward_time <= fert_end_time:
+                fert_hours += 1
+
+    total_new = (elapsed_hours + fert_hours) * max(0, int(base_reward))
+    garden["garden_berry"] += total_new
+    garden["last_update_time"] = last_update_time + elapsed_hours * 3600
+
+    if current_time >= cycle_end_time:
+        garden["last_update_time"] = cycle_end_time
+        garden["isseed"] = 0
+
+
+# 全局更新
 async def update_all_gardens(garden_data: dict):
     current_time = int(time.time())
     current_date_str = datetime.date.today().strftime("%Y-%m-%d")
     
     for user_id in garden_data:
         garden = garden_data[user_id]
+        if not isinstance(garden, dict):
+            continue
         
         # 获取用户等级配置
         current_level = garden.get("garden_level", 1)
@@ -42,59 +82,12 @@ async def update_all_gardens(garden_data: dict):
             garden["today_steal"] = 0
             garden["today_be_stolen"] = 0
             
-        # 处理播种状态
-        if garden["isseed"] == 1:
-            # 初始化最后更新时间（使用播种时间）
-            last_update_time = garden.get("last_update_time", garden["seed_time"])
-            
-            # 计算完整的小时数差（不足1小时舍弃）
-            time_diff = max(0, current_time - last_update_time)
-            elapsed_hours = time_diff // 3600
-            
-            # 计算剩余生长时间（秒）
-            growth_duration = 24 * 3600
-            remaining_seconds = max(0, growth_duration - (current_time - garden["seed_time"]))
-            
-            if elapsed_hours > 0 or remaining_seconds <= 0:
-                total_new = 0
-                remaining_hours = 24 - (current_time - garden["seed_time"]) // 3600
-                effective_hours = min(elapsed_hours, remaining_hours)
-                
-                # 计算施肥有效小时数
-                fert_hours = 0
-                if garden.get("isfert") == 1:
-                    fert_end_time = garden["fert_time"] + 12 * 3600
-                    # 计算施肥有效期内的小时数
-                    for hour in range(effective_hours):
-                        hour_time = last_update_time + (hour + 1) * 3600
-                        if garden["fert_time"] <= hour_time <= fert_end_time:
-                            fert_hours += 1
-                
-                # 总产量 = 基础产量 + 施肥加成（从等级配置读取basic_reward）
-                base_reward = level_config["basic_reward"]
-                total_new = effective_hours * base_reward + fert_hours * base_reward
-                
-                # 更新数据（严格整数运算）
-                garden["garden_berry"] = garden.get("garden_berry", 0) + total_new
-                garden["last_update_time"] = last_update_time + effective_hours * 3600
-            
-            # 检查24小时生长周期是否结束
-            if (current_time - garden["seed_time"]) >= 24 * 3600:
-                # 计算最后一小时的收成
-                # 检查施肥是否有效
-                is_fert = 0
-                if garden.get("isfert") == 1 and garden["fert_time"] <= garden["seed_time"] <= (garden["fert_time"] + 12 * 3600):
-                    is_fert = 1
-                
-                # 计算最后一小时的收成（从等级配置读取basic_reward）
-                final_reward = base_reward + (is_fert * base_reward)
-                garden["garden_berry"] = garden.get("garden_berry", 0) + final_reward
-                garden["last_update_time"] = garden["seed_time"]
-                
-                garden["isseed"] = 0
-            
-            # 施肥失效检测
-            if (current_time - garden["fert_time"]) // 3600 >= 12:
+        update_garden_production(garden, current_time, level_config["basic_reward"])
+
+        # 施肥失效检测
+        if garden.get("isfert") == 1:
+            fert_time = int(garden.get("fert_time", 0))
+            if current_time >= fert_time + 12 * 3600:
                 garden["isfert"] = 0
     
     save_data(garden_path, garden_data)

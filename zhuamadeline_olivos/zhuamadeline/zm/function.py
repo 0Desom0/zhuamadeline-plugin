@@ -170,7 +170,9 @@ def extract_mixed_qq(args: Message, param_count: int) -> list:
     # 遍历所有消息段
     for seg in args:
         if seg.type == 'at':
-            arg_list.append(seg.data['qq'])
+            target_id = seg.data.get('qq') or seg.data.get('id')
+            if target_id:
+                arg_list.append(str(target_id))
         elif seg.type == 'text':
             # 处理纯文本部分
             seg_text = seg.data['text'].strip()
@@ -188,7 +190,7 @@ def extract_mixed_qq(args: Message, param_count: int) -> list:
 # 获取QQ昵称
 async def get_nickname(bot: Bot, user_id: str) -> str:
     try:
-        user_info = await bot.get_stranger_info(user_id=int(user_id))
+        user_info = await bot.get_stranger_info(user_id=user_id)
         return user_info.get("nickname", f"{user_id}")
     except:
         return f"玩家{user_id}"  # 获取失败时使用默认名称

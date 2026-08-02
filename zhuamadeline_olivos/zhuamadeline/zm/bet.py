@@ -239,8 +239,8 @@ async def bet_handle(bot: Bot, event: GroupMessageEvent, arg: Message = CommandA
             return
         # 获取轮数
         turn = pvp_data.get('count', 100)
-        choose_user = int(pvp_data['list'][pos][0])
-        choose_user_name = await bot.get_group_member_info(group_id=int(group_id), user_id=choose_user)
+        choose_user = str(pvp_data['list'][pos][0])
+        choose_user_name = await bot.get_group_member_info(group_id=group_id, user_id=choose_user)
         choose_nickname = choose_user_name["nickname"]  # 取QQ昵称
         # 目标战力和目标轮数    
         choose_rank = pvp_choose[3]
@@ -656,7 +656,7 @@ async def double_ball_lottery():
     total_refund = 0
 
     for user_id, user_bar in bar_data.items():
-        if user_id.isdigit() and isinstance(user_bar, dict) and user_bar.get("double_ball",{}).get("ifplay",0) == 1:
+        if isinstance(user_bar, dict) and user_bar.get("double_ball", {}).get("ifplay", 0) == 1:
             user_bar.setdefault("bank", 0)
             user_bar.setdefault("double_ball", {})
 

@@ -246,7 +246,7 @@ async def display_liechang_inventory(bot: Bot, event: GroupMessageEvent, liechan
     sorted_madelines = await get_sorted_madelines(file_name, user_id, liechang_number)
     
     # 返回库存信息
-    user_info = await bot.get_stranger_info(user_id=int(user_id))
+    user_info = await bot.get_stranger_info(user_id=user_id)
     nickname = user_info.get("nickname", "未知昵称")
     msg = f'这是 [{nickname}] 的\n{liechang_number}号猎场的Madeline库存\n{sorted_madelines}'
     # 发送图片
@@ -286,7 +286,7 @@ async def display_all_liechang_inventory(bot: Bot, event: GroupMessageEvent, use
             all_sorted_madelines.append(f"猎场{liechang_number}的madeline库存:\n{sorted_madelines}")
 
     # 合并并发送所有猎场的库存
-    user_info = await bot.get_stranger_info(user_id=int(user_id))
+    user_info = await bot.get_stranger_info(user_id=user_id)
     nickname = user_info.get("nickname", "未知昵称")
     msg = f'这是 [{nickname}] 的\n所有猎场Madeline库存'
     

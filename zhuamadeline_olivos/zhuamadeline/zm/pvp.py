@@ -97,7 +97,7 @@ def pvp_guess(pos):
     bar_data.setdefault("pots", 0)
 
     for key, value in bar_data.items():
-        if key.isdigit() and isinstance(value, dict) and value.get("pvp_guess",{}).get("ifguess",0) == 1:
+        if isinstance(value, dict) and value.get("pvp_guess", {}).get("ifguess", 0) == 1:
             # 初始化 bank，如果不存在则设置为 0
             value.setdefault('bank', 0)
             if value["pvp_guess"]["pos"] == pos:
@@ -139,7 +139,7 @@ def pvp_guess_end():
     bar_data.setdefault("pots", 0)
     
     for key, value in bar_data.items():
-        if key.isdigit() and isinstance(value, dict) and value.get("pvp_guess",{}).get("ifguess",0) == 1:
+        if isinstance(value, dict) and value.get("pvp_guess", {}).get("ifguess", 0) == 1:
             # 初始化 bank，如果不存在则设置为 0
             value.setdefault('bank', 0)
             pos = value["pvp_guess"].get("pos", -1)
@@ -792,7 +792,7 @@ async def jjc_handle(bot: Bot, event: GroupMessageEvent):
         # 检查是否有人下注
         has_game = "否"
         for key, value in bar_data.items():
-            if key.isdigit() and isinstance(value, dict) and value.get("pvp_guess", {}).get("ifguess", 0) == 1:
+            if isinstance(value, dict) and value.get("pvp_guess", {}).get("ifguess", 0) == 1:
                 if value["pvp_guess"]["pos"] == i-1:  # 判断是否对应当前擂台
                     has_game = "是"
                     break  # 只要找到一个人下注，就可以退出循环

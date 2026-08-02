@@ -200,7 +200,7 @@ async def delete_account_handle(bot: Bot, event: GroupMessageEvent, arg: Message
 
     # 获取目标用户的昵称
     try:
-        user_info = await bot.get_stranger_info(user_id=int(target_qq))
+        user_info = await bot.get_stranger_info(user_id=target_qq)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception as e:
         await delete_account.finish(f"无法获取 [{target_qq}] 的昵称：{e}", at_sender=True)
@@ -315,7 +315,7 @@ async def ck_admin_single_handle(bot:Bot, event: GroupMessageEvent, arg: Message
     
     # 调用API获取昵称
     try:
-        user_info = await bot.get_stranger_info(user_id=int(user_id))
+        user_info = await bot.get_stranger_info(user_id=user_id)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception:
         await ck_admin_single.finish(f"无法获取玩家 [{user_id}] 的昵称。", at_sender=True)
@@ -536,7 +536,7 @@ async def ck_energy_handle(bot: Bot, event: GroupMessageEvent, arg: Message = Co
     user_id = args[0]
 
     try:
-        user_info = await bot.get_stranger_info(user_id=int(user_id))
+        user_info = await bot.get_stranger_info(user_id=user_id)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception:
         await ck_energy.finish(f"无法获取玩家 [{user_id}] 的昵称。", at_sender=True)
@@ -1178,7 +1178,7 @@ async def handle_change_user_item(bot: Bot, event: GroupMessageEvent, arg: Messa
     user_id, old_item, new_item = args
 
     try:
-        user_info = await bot.get_stranger_info(user_id=int(user_id))
+        user_info = await bot.get_stranger_info(user_id=user_id)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception:
         await change_user_item.finish(f"无法获取玩家 [{user_id}] 的昵称。", at_sender=True)
@@ -1238,7 +1238,7 @@ async def query_items_handle(bot: Bot, event: GroupMessageEvent, arg: Message = 
         return
     # 调用API获取昵称
     try:
-        user_info = await bot.get_stranger_info(user_id=int(user_id))
+        user_info = await bot.get_stranger_info(user_id=user_id)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception:
         await query_items.finish(f"无法获取玩家 [{user_id}] 的昵称。", at_sender=True)
@@ -1393,7 +1393,7 @@ async def query_cangpins_handle(bot: Bot, event: GroupMessageEvent, arg: Message
         return
     # 调用API获取昵称
     try:
-        user_info = await bot.get_stranger_info(user_id=int(user_id))
+        user_info = await bot.get_stranger_info(user_id=user_id)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception:
         await query_cangpins.finish(f"无法获取玩家 [{user_id}] 的昵称。", at_sender=True)
@@ -1493,7 +1493,7 @@ async def handle_change_user_collections(bot: Bot, event: GroupMessageEvent, arg
         return
 
     try:
-        user_info = await bot.get_stranger_info(user_id=int(user_id))
+        user_info = await bot.get_stranger_info(user_id=user_id)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception:
         await change_user_collections.finish(f"无法获取玩家 [{user_id}] 的昵称。", at_sender=True)
@@ -1530,8 +1530,11 @@ async def handle_madelinejd_query(bot: Bot, event: GroupMessageEvent, arg: Messa
     args = str(arg).split()
     if len(args) < 1:
         await madelinejd_query.finish("命令格式错误！正确格式：.查询jd QQ号 猎场号（可选）", at_sender=True)
-    target_qq_arg1 = extract_mixed_qq(arg, 1)
-    target_qq = target_qq_arg1[0]  # 玩家QQ号
+    target_qq_arg1 = extract_mixed_qq(Message(args[0]), 1)
+    if not target_qq_arg1:
+        await madelinejd_query.finish("目标用户 ID 格式错误！", at_sender=True)
+        return
+    target_qq = str(target_qq_arg1[0])  # 玩家 ID
     
     target_level = None
     if len(args) == 2:
@@ -1545,11 +1548,11 @@ async def handle_madelinejd_query(bot: Bot, event: GroupMessageEvent, arg: Messa
         await madelinejd_query.finish("命令格式错误！正确格式：.查询jd QQ号 猎场号（可选）", at_sender=True)
     # 获取玩家的陌生人信息
     try:
-        user_info = await bot.get_stranger_info(user_id=int(target_qq))
+        user_info = await bot.get_stranger_info(user_id=target_qq)
     except Exception as e:
         await madelinejd_query.finish(f"获取玩家信息失败: {e}", at_sender=True)
     # 获取进度信息
-    progress_message, total_progress, progress = madelinejd(int(target_qq), target_level, user_info['nickname'])
+    progress_message, total_progress, progress = madelinejd(target_qq, target_level, user_info['nickname'])
     # 打开玩家数据文件
     data = {}
     try:
@@ -1597,12 +1600,12 @@ async def handle_query_madeline(bot: Bot, event: GroupMessageEvent, arg: Message
         await query_madeline.finish("QQ号或 madeline 名称不能为空！", at_sender=True)
         return
 
-    try:
-        target_qq_arg = extract_mixed_qq(int(qq_id_arg), 1)
-    except ValueError or ArithmeticError:
-        await query_madeline.finish(f"[{qq_id}] 格式错误！", at_sender=True)
-        
-    qq_id = target_qq_arg
+    target_qq_arg = extract_mixed_qq(Message(qq_id_arg), 1)
+    if not target_qq_arg:
+        await query_madeline.finish(f"[{qq_id_arg}] 格式错误！", at_sender=True)
+        return
+
+    qq_id = str(target_qq_arg[0])
 
     # 打开主文件，检查玩家是否存在
     data = open_data(user_path/file_name)
@@ -1612,7 +1615,7 @@ async def handle_query_madeline(bot: Bot, event: GroupMessageEvent, arg: Message
 
     # 获取玩家昵称
     try:
-        user_info = await bot.get_stranger_info(user_id=int(qq_id))
+        user_info = await bot.get_stranger_info(user_id=qq_id)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception:
         await query_madeline.finish(f"无法获取玩家 [{qq_id}] 的昵称。", at_sender=True)
@@ -1653,17 +1656,19 @@ async def query_madeline_inventory_handle(bot: Bot, event: GroupMessageEvent, ar
     
     # 提取玩家的QQ号和猎场号
     args = str(arg).strip().split()
-    target = args[0] 
+    if not args:
+        await query_madeline_inventory.finish("命令格式错误！正确格式：.查询madeline库存 用户ID [猎场号]", at_sender=True)
+        return
+    target = args[0]
+    target_qq_arg = extract_mixed_qq(Message(target), 1)
+    if not target_qq_arg:
+        await query_madeline_inventory.finish(f"[{target}] 格式错误！", at_sender=True)
+        return
 
-    try:
-        target_qq_arg = extract_mixed_qq(int(target), 1)
-    except ValueError or ArithmeticError:
-        await query_madeline.finish(f"[{target}] 格式错误！", at_sender=True)
-    
-    target_qq = target_qq_arg[0]  # 玩家QQ号
+    target_qq = str(target_qq_arg[0])  # 玩家 ID
     # 获取玩家昵称
     try:
-        user_info = await bot.get_stranger_info(user_id=int(target_qq))
+        user_info = await bot.get_stranger_info(user_id=target_qq)
         nickname = user_info.get("nickname", "未知昵称")
     except Exception:
         await query_madeline.finish(f"无法获取玩家 [{target_qq}] 的昵称。", at_sender=True)
@@ -1870,7 +1875,7 @@ async def clear_game_handle(bot: Bot, event: GroupMessageEvent, arg: Message = C
     elif game_type == '3':
         #把所有玩4号游戏的状态变更为nothing
         for key, value in bar_data.items():
-            if key.isdigit() and isinstance(value, dict) and value.get("pvp_guess",{}).get("ifguess",0) == 1:
+            if key in user_data and isinstance(value, dict) and value.get("pvp_guess", {}).get("ifguess", 0) == 1:
                 value["pvp_guess"]["ifguess"] = 0
                 value["pvp_guess"]["pos"] = -1
                 value["pvp_guess"]["choose_rank"] = -1
@@ -1881,7 +1886,7 @@ async def clear_game_handle(bot: Bot, event: GroupMessageEvent, arg: Message = C
     elif game_type == '4':
         #把所有玩4号游戏的状态变更为nothing
         for key, value in bar_data.items():
-            if key.isdigit() and isinstance(value, dict) and value.get("double_ball",{}).get("ifplay",0) == 1:
+            if key in user_data and isinstance(value, dict) and value.get("double_ball", {}).get("ifplay", 0) == 1:
                 user_data[str(key)]["berry"] += value["double_ball"].get("ticket_cost", 300)
                 value["double_ball"]["ifplay"] = 0
                 value["double_ball"]["red_points"] = 0
@@ -2218,7 +2223,7 @@ async def get_nicknames(bot: Bot, group_id: int, user_ids: list) -> list:
     nicknames = []
     for user_id in user_ids:
         try:
-            user_info = await bot.get_group_member_info(group_id=group_id, user_id=int(user_id))
+            user_info = await bot.get_group_member_info(group_id=group_id, user_id=user_id)
             nicknames.append(user_info.get("nickname", "未知用户"))
         except Exception as e:
             logger.warning(f"获取用户 {user_id} 的昵称失败：{e}")

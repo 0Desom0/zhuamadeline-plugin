@@ -58,6 +58,7 @@ async def add_interest():
         return
     
     bar_data = open_data(bar_path)
+    user_data = open_data(full_path)
     bar_data.setdefault("pots", 0)
     
     # 检查是否已发放报酬
@@ -71,7 +72,7 @@ async def add_interest():
     
     add_pots = 0
     for user_id, user_bar in bar_data.items():
-        if user_id.isdigit() and isinstance(user_bar, dict):
+        if user_id in user_data and isinstance(user_bar, dict):
             user_bar.setdefault("bank", 0)
             user_bar.setdefault("interest", 0)
             user_bar.setdefault("interest_today", 0)
